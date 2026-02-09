@@ -78,7 +78,7 @@ const ProposalForm: React.FC<ProposalFormProps> = ({ onBack }) => {
 
     setAnalyzing(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const ai = new GoogleGenAI({ apiKey: "AIzaSyAVO-30qMLZr1IfYdziTExIi5I4wk8uC_o" });
       
       const prompt = `أنت خبير في تقييم المشاريع الخيرية. قم بمراجعة هذا المقترح وتقديم تقييم فني وقائمة من الاقتراحات المحددة والقابلة للتنفيذ لزيادة فرص القبول.
       العنوان: ${formData.projectTitle}
