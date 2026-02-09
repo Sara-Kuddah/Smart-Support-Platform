@@ -1,21 +1,38 @@
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
-  ArrowRight, CheckCircle, Send, Building2, FileText, 
-  ClipboardList, Phone, Shield, IdCard, Upload, 
-  HelpCircle, AlertCircle, Sparkles, Wand2
+  ArrowRight, CheckCircle, Send, Building2, 
+  ClipboardList, Sparkles, Wand2, ChevronDown, ChevronUp,
+  Check, Edit3, MessageSquareText, AlertTriangle
 } from 'lucide-react';
 import { proposalService } from '../services/proposalService';
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 
 interface ProposalFormProps {
   onBack: () => void;
 }
 
-/**
- * FormGroup component defined at the top to ensure it is available before usage
- * and typed explicitly to fix children property errors.
- */
+interface AISuggestion {
+  field: string;
+  issue: string;
+  suggestion: string;
+  improvedText: string;
+}
+
+interface AIFeedback {
+  summary: string;
+  suggestions: AISuggestion[];
+}
+
+const FIELD_LABELS: Record<string, string> = {
+  projectTitle: 'عنوان المشروع',
+  projectDesc: 'وصف المشروع',
+  beneficiaries: 'الفئات المستهدفة',
+  fundingAmount: 'المبلغ المطلوب',
+  budgetBreakdown: 'تفاصيل الميزانية',
+  expectedOutcomes: 'المخرجات والأثر'
+};
+
 const FormGroup: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
   <div className="space-y-1.5 md:space-y-2">
     <label className="text-xs md:text-sm font-bold text-slate-700 pr-1">{label}</label>
@@ -28,7 +45,8 @@ const ProposalForm: React.FC<ProposalFormProps> = ({ onBack }) => {
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [declared, setDeclared] = useState(false);
-  const [aiReview, setAiReview] = useState<string | null>(null);
+  const [aiFeedback, setAiFeedback] = useState<AIFeedback | null>(null);
+  const [isFeedbackExpanded, setIsFeedbackExpanded] = useState(true);
   
   const [formData, setFormData] = useState({
     entityType: 'non-profit',
@@ -50,7 +68,8 @@ const ProposalForm: React.FC<ProposalFormProps> = ({ onBack }) => {
     expectedOutcomes: ''
   });
 
-  // Gemini API integration for real-time project proposal feedback
+  const formRefs = useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | null>>({});
+
   const performAIAnalysis = async () => {
     if (!formData.projectTitle || !formData.projectDesc) {
       alert("الرجاء إدخال عنوان المشروع ووصفه أولاً للحصول على المراجعة.");
@@ -59,28 +78,92 @@ const ProposalForm: React.FC<ProposalFormProps> = ({ onBack }) => {
 
     setAnalyzing(true);
     try {
-      // Creating a fresh GoogleGenAI instance right before making the API call
+      // Create fresh instance right before call as per guidelines
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const prompt = `أنت خبير في تقييم المشاريع الخيرية. قم بمراجعة هذا المقترح وتقديم تقييم فني موجز (3 أسطر كحد أقصى) يوضح نقاط القوة وفرص التحسين لزيادة فرص القبول.
+      
+      const prompt = `أنت خبير في تقييم المشاريع الخيرية. قم بمراجعة هذا المقترح وتقديم تقييم فني وقائمة من الاقتراحات المحددة والقابلة للتنفيذ لزيادة فرص القبول.
       العنوان: ${formData.projectTitle}
       الوصف: ${formData.projectDesc}
       الميزانية: ${formData.fundingAmount} ريال
-      الفئة: ${formData.beneficiaries}`;
+      الفئة: ${formData.beneficiaries}
+      الميزانية التفصيلية: ${formData.budgetBreakdown}
+      الأثر المتوقع: ${formData.expectedOutcomes}`;
 
-      // Generating content using the gemini-3-flash-preview model for high-speed analysis
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              summary: { type: Type.STRING, description: "A brief professional summary of the proposal's strengths and weaknesses." },
+              suggestions: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    field: { 
+                      type: Type.STRING, 
+                      description: "The technical field name to improve (must be one of: projectTitle, projectDesc, beneficiaries, fundingAmount, budgetBreakdown, expectedOutcomes)" 
+                    },
+                    issue: { type: Type.STRING, description: "What is the problem with the current text?" },
+                    suggestion: { type: Type.STRING, description: "Explanation of how to improve it." },
+                    improvedText: { type: Type.STRING, description: "A concrete rewritten version of the field content that follows best practices for charity grants." }
+                  },
+                  required: ["field", "issue", "suggestion", "improvedText"]
+                }
+              }
+            },
+            required: ["summary", "suggestions"]
+          }
+        },
       });
 
-      // Extracting text output directly from the .text property of GenerateContentResponse
       if (response.text) {
-        setAiReview(response.text);
+        const feedback = JSON.parse(response.text) as AIFeedback;
+        setAiFeedback(feedback);
+        setIsFeedbackExpanded(true);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("AI Analysis failed:", error);
+      
+      // If error is about API key, prompt user to select one
+      if (error.message?.includes("API Key") || error.message?.includes("entity was not found")) {
+        if (window.confirm("يبدو أن هناك مشكلة في مفتاح الوصول (API Key). هل تود إعادة اختيار المفتاح؟")) {
+          try {
+            await (window as any).aistudio.openSelectKey();
+          } catch (e) {
+            console.error("Selector failed", e);
+          }
+        }
+      } else {
+        alert("تعذر الحصول على تحليل الذكاء الاصطناعي حالياً. يرجى المحاولة لاحقاً.");
+      }
     } finally {
       setAnalyzing(false);
+    }
+  };
+
+  const handleAcceptSuggestion = (suggestion: AISuggestion) => {
+    setFormData(prev => ({
+      ...prev,
+      [suggestion.field]: suggestion.improvedText
+    }));
+    
+    if (aiFeedback) {
+      setAiFeedback({
+        ...aiFeedback,
+        suggestions: aiFeedback.suggestions.filter(s => s !== suggestion)
+      });
+    }
+  };
+
+  const handleModifySuggestion = (field: string) => {
+    const el = formRefs.current[field];
+    if (el) {
+      el.focus();
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   };
 
@@ -92,8 +175,8 @@ const ProposalForm: React.FC<ProposalFormProps> = ({ onBack }) => {
     
     try {
       const savedProposal = await proposalService.saveProposal(formData);
-      if (aiReview) {
-        await proposalService.updateAIReview(savedProposal.id, aiReview);
+      if (aiFeedback) {
+        await proposalService.updateAIReview(savedProposal.id, aiFeedback.summary);
       }
       setSubmitted(true);
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -121,16 +204,6 @@ const ProposalForm: React.FC<ProposalFormProps> = ({ onBack }) => {
           <p className="text-slate-600 mb-8 leading-relaxed text-sm md:text-base">
             تم حفظ بيانات المقترح في قاعدة بياناتنا بنجاح، وسنقوم بمراجعة طلبكم قريباً.
           </p>
-
-          {aiReview && (
-            <div className="mb-8 p-5 md:p-6 bg-primary-50 rounded-2xl border border-primary-100 text-right">
-              <div className="flex items-center gap-2 mb-3 text-primary-700 font-bold text-sm">
-                <Sparkles className="w-4 h-4 md:w-5 md:h-5" />
-                <span>توصيات الذكاء الاصطناعي:</span>
-              </div>
-              <p className="text-slate-700 leading-relaxed italic text-xs md:text-sm">{aiReview}</p>
-            </div>
-          )}
 
           <div className="flex flex-col gap-4">
             <button
@@ -210,52 +283,180 @@ const ProposalForm: React.FC<ProposalFormProps> = ({ onBack }) => {
                 <h2 className="text-lg md:text-xl font-bold text-slate-800">تفاصيل المشروع</h2>
               </div>
               <div className="space-y-4 md:y-6">
-                <input required name="projectTitle" value={formData.projectTitle} onChange={handleInputChange} className="input-field" placeholder="عنوان المشروع *" />
-                <textarea required name="projectDesc" value={formData.projectDesc} onChange={handleInputChange} rows={3} className="input-field" placeholder="وصف المشروع *" />
+                <input 
+                  required 
+                  name="projectTitle" 
+                  ref={el => { formRefs.current['projectTitle'] = el; }}
+                  value={formData.projectTitle} 
+                  onChange={handleInputChange} 
+                  className="input-field" 
+                  placeholder="عنوان المشروع *" 
+                />
+                <textarea 
+                  required 
+                  name="projectDesc" 
+                  ref={el => { formRefs.current['projectDesc'] = el; }}
+                  value={formData.projectDesc} 
+                  onChange={handleInputChange} 
+                  rows={3} 
+                  className="input-field" 
+                  placeholder="وصف المشروع *" 
+                />
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-                   <input required name="beneficiaries" value={formData.beneficiaries} onChange={handleInputChange} className="input-field" placeholder="الفئات المستهدفة *" />
+                   <input 
+                    required 
+                    name="beneficiaries" 
+                    ref={el => { formRefs.current['beneficiaries'] = el; }}
+                    value={formData.beneficiaries} 
+                    onChange={handleInputChange} 
+                    className="input-field" 
+                    placeholder="الفئات المستهدفة *" 
+                   />
                    <input required name="location" value={formData.location} onChange={handleInputChange} className="input-field" placeholder="مقر التنفيذ *" />
                    <input required name="duration" value={formData.duration} onChange={handleInputChange} className="input-field" placeholder="المدة المتوقعة *" />
-                   <input required name="fundingAmount" value={formData.fundingAmount} onChange={handleInputChange} type="number" className="input-field" placeholder="المبلغ المطلوب (ريال) *" />
+                   <input 
+                    required 
+                    name="fundingAmount" 
+                    ref={el => { formRefs.current['fundingAmount'] = el; }}
+                    value={formData.fundingAmount} 
+                    onChange={handleInputChange} 
+                    type="number" 
+                    className="input-field" 
+                    placeholder="المبلغ المطلوب (ريال) *" 
+                   />
                 </div>
-                <textarea required name="budgetBreakdown" value={formData.budgetBreakdown} onChange={handleInputChange} rows={2} className="input-field" placeholder="تفاصيل الميزانية التقديرية *" />
-                <textarea required name="expectedOutcomes" value={formData.expectedOutcomes} onChange={handleInputChange} rows={2} className="input-field" placeholder="المخرجات والأثر المتوقع *" />
+                <textarea 
+                  required 
+                  name="budgetBreakdown" 
+                  ref={el => { formRefs.current['budgetBreakdown'] = el; }}
+                  value={formData.budgetBreakdown} 
+                  onChange={handleInputChange} 
+                  rows={2} 
+                  className="input-field" 
+                  placeholder="تفاصيل الميزانية التقديرية *" 
+                />
+                <textarea 
+                  required 
+                  name="expectedOutcomes" 
+                  ref={el => { formRefs.current['expectedOutcomes'] = el; }}
+                  value={formData.expectedOutcomes} 
+                  onChange={handleInputChange} 
+                  rows={2} 
+                  className="input-field" 
+                  placeholder="المخرجات والأثر المتوقع *" 
+                />
               </div>
             </div>
 
-            {/* AI Preview */}
-            <div className="p-6 md:p-8 bg-slate-900 rounded-3xl text-white relative overflow-hidden">
-              <Sparkles className="absolute -bottom-6 -left-6 w-24 h-24 md:w-32 md:h-32 opacity-10" />
-              <div className="relative z-10 space-y-5">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
-                  <div>
-                    <h3 className="text-lg md:text-xl font-bold flex items-center gap-2">
-                      <Wand2 className="w-5 h-5 text-primary-400" />
-                      المراجعة الذكية الفورية
-                    </h3>
-                    <p className="text-slate-400 text-xs md:text-sm">احصل على ملاحظات تحسينية لمشروعك قبل الإرسال.</p>
-                  </div>
-                  <button 
-                    type="button"
-                    disabled={analyzing}
-                    onClick={performAIAnalysis}
-                    className="w-full md:w-auto flex items-center justify-center gap-2 bg-white text-slate-900 px-6 py-3 rounded-xl font-bold hover:bg-primary-50 transition-all disabled:opacity-50 active:scale-95"
-                  >
-                    {analyzing ? (
-                      <div className="w-5 h-5 border-2 border-slate-900/30 border-t-slate-900 rounded-full animate-spin"></div>
-                    ) : (
-                      <>تحليل المقترح <Sparkles className="w-4 h-4" /></>
-                    )}
-                  </button>
+            {/* AI Analysis Section */}
+            <div className="overflow-hidden border border-slate-200 rounded-3xl bg-slate-50 transition-all">
+              <div 
+                className={`p-6 md:p-8 bg-slate-900 text-white relative flex items-center justify-between cursor-pointer ${aiFeedback ? '' : 'pointer-events-none'}`}
+                onClick={() => aiFeedback && setIsFeedbackExpanded(!isFeedbackExpanded)}
+              >
+                <Sparkles className="absolute -bottom-6 -left-6 w-24 h-24 md:w-32 md:h-32 opacity-10" />
+                <div className="relative z-10">
+                  <h3 className="text-lg md:text-xl font-bold flex items-center gap-2">
+                    <Wand2 className="w-5 h-5 text-primary-400" />
+                    المراجعة الذكية الفورية
+                  </h3>
+                  <p className="text-slate-400 text-xs md:text-sm">احصل على ملاحظات تحسينية لمشروعك قبل الإرسال.</p>
                 </div>
-
-                {aiReview && (
-                  <div className="mt-4 p-4 bg-white/5 rounded-2xl border border-white/10 animate-in fade-in slide-in-from-top-2">
-                    <p className="text-primary-300 text-[10px] md:text-xs font-bold mb-1">توصيات المساعد الذكي:</p>
-                    <p className="text-slate-200 text-xs md:text-sm leading-relaxed italic">{aiReview}</p>
-                  </div>
-                )}
+                
+                <div className="flex items-center gap-4 relative z-10">
+                  {!aiFeedback && (
+                    <button 
+                      type="button"
+                      disabled={analyzing}
+                      onClick={(e) => { e.stopPropagation(); performAIAnalysis(); }}
+                      className="flex items-center gap-2 bg-white text-slate-900 px-6 py-3 rounded-xl font-bold hover:bg-primary-50 transition-all disabled:opacity-50 active:scale-95 text-sm md:text-base"
+                    >
+                      {analyzing ? (
+                        <div className="w-5 h-5 border-2 border-slate-900/30 border-t-slate-900 rounded-full animate-spin"></div>
+                      ) : (
+                        <>تحليل المقترح <Sparkles className="w-4 h-4" /></>
+                      )}
+                    </button>
+                  )}
+                  {aiFeedback && (
+                    <div className="bg-white/10 p-2 rounded-lg">
+                      {isFeedbackExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                    </div>
+                  )}
+                </div>
               </div>
+
+              {aiFeedback && isFeedbackExpanded && (
+                <div className="p-6 md:p-8 space-y-8 animate-in slide-in-from-top-4 duration-300">
+                  <div className="bg-primary-50 p-4 rounded-2xl border border-primary-100">
+                    <p className="text-primary-800 text-sm font-bold flex items-center gap-2 mb-2">
+                      <MessageSquareText className="w-4 h-4" />
+                      ملخص التقييم:
+                    </p>
+                    <p className="text-slate-700 text-sm leading-relaxed italic">{aiFeedback.summary}</p>
+                  </div>
+
+                  {aiFeedback.suggestions.length > 0 && (
+                    <div className="space-y-4">
+                      <h4 className="text-slate-800 font-bold text-sm">اقتراحات التحسين المحددة ({aiFeedback.suggestions.length}):</h4>
+                      <div className="space-y-4">
+                        {aiFeedback.suggestions.map((s, idx) => (
+                          <div key={idx} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="space-y-1">
+                                <span className="text-[10px] font-bold text-primary-600 uppercase tracking-wider">{FIELD_LABELS[s.field] || s.field}</span>
+                                <p className="text-slate-900 font-bold text-sm">{s.issue}</p>
+                              </div>
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleAcceptSuggestion(s)}
+                                  className="flex items-center gap-1.5 bg-green-50 text-green-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-green-600 hover:text-white transition-all shadow-sm"
+                                  title="تطبيق التعديل المقترح"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                  قبول
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleModifySuggestion(s.field)}
+                                  className="flex items-center gap-1.5 bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-200 transition-all shadow-sm"
+                                  title="الذهاب للحقل للتعديل يدوياً"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                  تعديل
+                                </button>
+                              </div>
+                            </div>
+                            
+                            <div className="p-3 bg-slate-50 rounded-xl border-r-4 border-primary-500">
+                              <p className="text-xs text-slate-500 mb-1 font-medium italic">النص المقترح:</p>
+                              <p className="text-slate-700 text-sm leading-relaxed">{s.improvedText}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {aiFeedback.suggestions.length === 0 && (
+                    <div className="text-center py-6 text-slate-400 italic text-sm">
+                      تم تطبيق كافة الاقتراحات المقترحة أو لا توجد ملاحظات إضافية حالياً.
+                    </div>
+                  )}
+                  
+                  <div className="flex justify-center pt-2">
+                    <button 
+                      type="button"
+                      disabled={analyzing}
+                      onClick={performAIAnalysis}
+                      className="text-primary-600 text-sm font-bold flex items-center gap-2 hover:underline"
+                    >
+                      {analyzing ? <div className="w-4 h-4 border-2 border-primary-200 border-t-primary-600 rounded-full animate-spin"></div> : <><Sparkles className="w-4 h-4" /> إعادة التحليل بناءً على التعديلات الجديدة</>}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="p-5 bg-primary-50 rounded-2xl border border-primary-100">
