@@ -57,8 +57,8 @@ const Hero: React.FC<HeroProps> = ({ onFormClick }) => {
         {/* Quick Stats/Trust Indicators */}
         <div className="mt-12 lg:mt-16 pt-8 border-t border-slate-200 grid grid-cols-2 md:grid-cols-3 gap-6 max-w-4xl mx-auto opacity-80">
             <div className="p-2">
-                <p className="text-2xl lg:text-3xl font-bold text-primary-700">+50</p>
-                <p className="text-xs lg:text-sm text-slate-500 font-medium">مشروع مدعوم</p>
+                <p className="text-2xl lg:text-3xl font-bold text-primary-700">الهدف </p>
+                <p className="text-xs lg:text-sm text-slate-500 font-medium">+50 مشروع مدعوم</p>
             </div>
             <div className="p-2">
                 <p className="text-2xl lg:text-3xl font-bold text-primary-700">شفافية</p>
