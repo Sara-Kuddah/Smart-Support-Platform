@@ -62,6 +62,7 @@ const ProposalForm: React.FC<ProposalFormProps> = ({ onBack }) => {
       // Creating a fresh GoogleGenAI instance right before making the API call
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY; });
       console.log("Server API Key:", apiKey);
+      
       const prompt = `أنت خبير في تقييم المشاريع الخيرية. قم بمراجعة هذا المقترح وتقديم تقييم فني موجز (3 أسطر كحد أقصى) يوضح نقاط القوة وفرص التحسين لزيادة فرص القبول.
       العنوان: ${formData.projectTitle}
       الوصف: ${formData.projectDesc}
