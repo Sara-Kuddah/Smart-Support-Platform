@@ -61,6 +61,8 @@ const ProposalForm: React.FC<ProposalFormProps> = ({ onBack }) => {
     try {
       // Creating a fresh GoogleGenAI instance right before making the API call
       console.log("test2");
+      console.log(process.env.AI_API_KEY);
+      const ai = new GoogleGenAI({ apiKey: process.env.AI_API_KEY);
 
       
       
